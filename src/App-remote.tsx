@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useCRSqliteQuery } from './CRSqliteQueryProvider';
 import { useTodoLists, useTodosByList, useAllTodos, useChanges } from './dbReads';
-import { useAddTodo, useToggleTodo, useDeleteTodo, useAddTodoList, useDeleteTodoList } from './dbWrites';
+import { useAddTodoRemote, useToggleTodoRemote, useDeleteTodoRemote, useAddTodoListRemote, useDeleteTodoListRemote } from './dbWrites-remote';
 
 interface AppState {
   selectedList: string;
@@ -11,7 +11,7 @@ interface AppState {
 }
 
 function App() {
-  const { dbStatus, error, db, tabSync, setError, retryInitialization } = useCRSqliteQuery();
+  const { dbStatus, error, tabSync, setError, retryInitialization } = useCRSqliteQuery();
   
   const [appState, setAppState] = useState<AppState>({
     selectedList: '',
@@ -26,11 +26,11 @@ function App() {
   const { data: selectedTodos = [], isLoading: selectedTodosLoading } = useTodosByList(appState.selectedList);
 
   // Mutations
-  const addTodoMutation = useAddTodo();
-  const toggleTodoMutation = useToggleTodo();
-  const deleteTodoMutation = useDeleteTodo();
-  const addTodoListMutation = useAddTodoList();
-  const deleteTodoListMutation = useDeleteTodoList();
+  const addTodoMutation = useAddTodoRemote();
+  const toggleTodoMutation = useToggleTodoRemote();
+  const deleteTodoMutation = useDeleteTodoRemote();
+  const addTodoListMutation = useAddTodoListRemote();
+  const deleteTodoListMutation = useDeleteTodoListRemote();
 
   // Set default selected list when todo lists load
   useEffect(() => {

@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import App from "./App-v5";
+import App from "./App-remote";
 import { CRSqliteQueryProvider } from "./CRSqliteQueryProvider";
 import { createDB, closeDB } from "./databaseFactory";
 import "./index.css";

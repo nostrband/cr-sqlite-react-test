@@ -1,6 +1,10 @@
 // Reusable CRSqlite Tab Synchronization class
 import { DB } from "@vlcn.io/crsqlite-wasm";
-import { createSharedWorkerShim, MessagePortLike, SharedWorkerLike } from "./sharedworker-shim";
+import {
+  createSharedWorkerShim,
+  MessagePortLike,
+  SharedWorkerLike,
+} from "./sharedworker-shim";
 
 interface Change {
   table: string;
@@ -15,14 +19,17 @@ interface Change {
 }
 
 interface WorkerMessage {
-  type: "sync";
+  type: "sync" | "exec";
   data?: any;
+  sql?: string;
+  args?: any[];
 }
 
 interface WorkerResponse {
-  type: "sync-data" | "error";
+  type: "sync-data" | "error" | "exec-reply";
   data?: Change[];
   error?: string;
+  result?: any;
 }
 
 interface BroadcastMessage {
@@ -42,13 +49,22 @@ export class CRSqliteTabSync {
   private changeInterval: NodeJS.Timeout | null = null;
   private isStarted = false;
   private siteId: Uint8Array | null = null;
+  private pendingExecRequests = new Map<
+    string,
+    { resolve: (result: any) => void; reject: (error: Error) => void }
+  >();
+  private execRequestCounter = 0;
 
   // Event handlers
   private onSyncDataReceived: ((data: Change[]) => void) | null = null;
   private onError: ((error: string) => void) | null = null;
   private onTablesChanged: ((tables: string[]) => void) | null = null;
 
-  constructor(db: DB, sharedWorkerUrl: string, onTablesChanged?: (tables: string[]) => void) {
+  constructor(
+    db: DB,
+    sharedWorkerUrl: string,
+    onTablesChanged?: (tables: string[]) => void
+  ) {
     this.db = db;
     this.sharedWorkerUrl = sharedWorkerUrl;
     this.tabId = `tab-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -62,19 +78,18 @@ export class CRSqliteTabSync {
       console.log("[CRSqliteTabSync] Starting...");
 
       // Get our site_id for filtering
-      const siteIdResult = await this.db.execO<{ site_id: Uint8Array }>("SELECT crsql_site_id() as site_id");
+      const siteIdResult = await this.db.execO<{ site_id: Uint8Array }>(
+        "SELECT crsql_site_id() as site_id"
+      );
       this.siteId = siteIdResult?.[0]?.site_id;
       if (!this.siteId) throw new Error("No local site_id");
       console.log("[CRSqliteTabSync] Local site_id: ", this.siteId);
 
       // Initialize shared worker
-      this.worker = await createSharedWorkerShim(
-        this.sharedWorkerUrl,
-        {
-          type: "module",
-          name: "crsqlite-sync-" + this.tabId,
-        }
-      );
+      this.worker = await createSharedWorkerShim(this.sharedWorkerUrl, {
+        type: "module",
+        name: "crsqlite-sync-" + this.tabId,
+      });
 
       this.port = this.worker.port;
 
@@ -172,9 +187,26 @@ export class CRSqliteTabSync {
         }
         break;
 
+      case "exec-reply":
+        // Handle exec reply by resolving the corresponding promise
+        const requestId = (event.data as any).requestId;
+        if (requestId && this.pendingExecRequests.has(requestId)) {
+          const { resolve } = this.pendingExecRequests.get(requestId)!;
+          this.pendingExecRequests.delete(requestId);
+          resolve(response.result);
+        }
+        break;
+
       case "error":
         console.error("[CRSqliteTabSync] Worker error:", response.error);
-        if (this.onError) {
+
+        // Check if this error is for a pending exec request
+        const errorRequestId = (event.data as any).requestId;
+        if (errorRequestId && this.pendingExecRequests.has(errorRequestId)) {
+          const { reject } = this.pendingExecRequests.get(errorRequestId)!;
+          this.pendingExecRequests.delete(errorRequestId);
+          reject(new Error(response.error || "Unknown worker error"));
+        } else if (this.onError) {
           this.onError(response.error || "Unknown worker error");
         }
         break;
@@ -256,14 +288,16 @@ export class CRSqliteTabSync {
           );
         }
       });
-      
+
       // Now that changes are visible, notify TanStack Query to invalidate affected queries
       // This is NOT a local change, so don't trigger sync
       if (touched.size > 0 && this.onTablesChanged) {
         this.onTablesChanged([...touched]);
       }
-      
-      console.log(`[CRSqliteTabSync] Successfully applied ${filteredChanges.length} external changes`);
+
+      console.log(
+        `[CRSqliteTabSync] Successfully applied ${filteredChanges.length} external changes`
+      );
     } catch (error) {
       console.error(`[CRSqliteTabSync] Error applying changes:`, error);
       throw error;
@@ -371,10 +405,51 @@ export class CRSqliteTabSync {
         }
       }
     } catch (error) {
-      console.error("[CRSqliteTabSync] Error checking for local changes:", error);
+      console.error(
+        "[CRSqliteTabSync] Error checking for local changes:",
+        error
+      );
       if (this.onError) {
         this.onError((error as Error).message);
       }
     }
+  }
+
+  // Remote database execution method
+  async dbExec(sql: string, args: any[] = []): Promise<any> {
+    if (!this.port || !this.isStarted) {
+      throw new Error("TabSync not started or port not available");
+    }
+
+    return new Promise((resolve, reject) => {
+      const requestId = `exec-${this.execRequestCounter++}`;
+
+      // Store the promise handlers
+      let timeout: ReturnType<typeof setTimeout> | null = null;
+
+      this.pendingExecRequests.set(requestId, {
+        resolve: (v) => {
+          if (timeout) clearTimeout(timeout);
+          resolve(v);
+        },
+        reject,
+      });
+
+      // Send exec message to worker with request ID
+      this.port!.postMessage({
+        type: "exec",
+        sql,
+        args,
+        requestId,
+      } as WorkerMessage & { requestId: string });
+
+      // Set a timeout to avoid hanging forever
+      timeout = setTimeout(() => {
+        if (this.pendingExecRequests.has(requestId)) {
+          this.pendingExecRequests.delete(requestId);
+          reject(new Error("Database execution timeout"));
+        }
+      }, 10000); // 10 second timeout
+    });
   }
 }

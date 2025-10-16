@@ -13,6 +13,7 @@ interface CRSqliteQueryContextType {
   tabSync: CRSqliteTabSync | null;
   setError: (error: string | null) => void;
   retryInitialization: () => Promise<void>;
+  dbExec: (sql: string, args?: any[]) => Promise<any>;
 }
 
 const CRSqliteQueryContext = createContext<CRSqliteQueryContextType | undefined>(undefined);
@@ -116,6 +117,13 @@ export function CRSqliteQueryProvider({
     await initializeDatabase();
   };
 
+  const dbExec = async (sql: string, args: any[] = []): Promise<any> => {
+    if (!tabSync || !db) {
+      throw new Error('Database or TabSync not available');
+    }
+    return tabSync.dbExec(sql, args);
+  };
+
   const contextValue: CRSqliteQueryContextType = {
     dbStatus,
     error,
@@ -123,6 +131,7 @@ export function CRSqliteQueryProvider({
     tabSync,
     setError,
     retryInitialization,
+    dbExec,
   };
 
   return (

@@ -2,6 +2,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { DB } from "@vlcn.io/crsqlite-wasm";
 import { qk } from "./queryKeys";
+import { useCRSqliteQuery } from "./CRSqliteQueryProvider";
 
 interface TodoList {
   name: string;
@@ -27,7 +28,8 @@ interface Change {
   seq: number;
 }
 
-export function useTodoLists(db: DB | null) {
+export function useTodoLists() {
+  const { db } = useCRSqliteQuery();
   return useQuery({
     queryKey: qk.todoLists(),
     queryFn: async () => {
@@ -42,7 +44,8 @@ export function useTodoLists(db: DB | null) {
   });
 }
 
-export function useTodosByList(db: DB | null, list: string) {
+export function useTodosByList(list: string) {
+  const { db } = useCRSqliteQuery();
   return useQuery({
     queryKey: qk.todosByList(list),
     queryFn: async () => {
@@ -56,11 +59,12 @@ export function useTodosByList(db: DB | null, list: string) {
     meta: { tables: ["todo"] },
     enabled: !!db && !!list,
     // optional: select to stabilize referential equality
-    select: (rows) => rows.map(r => ({ ...r })),
+    select: (rows) => rows.map((r) => ({ ...r })),
   });
 }
 
-export function useTodo(db: DB | null, id: string) {
+export function useTodo(id: string) {
+  const { db } = useCRSqliteQuery();
   return useQuery({
     queryKey: qk.todoById(id),
     queryFn: async () => {
@@ -76,7 +80,8 @@ export function useTodo(db: DB | null, id: string) {
   });
 }
 
-export function useAllTodos(db: DB | null) {
+export function useAllTodos() {
+  const { db } = useCRSqliteQuery();
   return useQuery({
     queryKey: qk.allTodos(),
     queryFn: async () => {
@@ -91,7 +96,8 @@ export function useAllTodos(db: DB | null) {
   });
 }
 
-export function useChanges(db: DB | null) {
+export function useChanges() {
+  const { db } = useCRSqliteQuery();
   return useQuery({
     queryKey: qk.changes(),
     queryFn: async () => {
