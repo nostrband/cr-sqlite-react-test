@@ -15,6 +15,7 @@ const initializeWorker = async () => {
     
     // Set up connection handler immediately (no awaits above it)
     self.addEventListener('connect', (event: any) => {
+      console.log('[SharedWorker] got connect, ports:', event?.ports?.length);
       worker.onConnect(event.ports[0]);
     });
 
