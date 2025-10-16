@@ -12,7 +12,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <CRSqliteQueryProvider
       sharedWorkerUrl={sharedWorkerUrl}
-      createDB={createDB}
+      createDB={() => createDB(":memory:")}
       closeDB={closeDB}
       queryClient={queryClient}
       setOnLocalChanges={setOnLocalChanges}

@@ -63,7 +63,9 @@ export class CRSqliteTabSync {
 
       // Get our site_id for filtering
       const siteIdResult = await this.db.execO<{ site_id: Uint8Array }>("SELECT crsql_site_id() as site_id");
-      this.siteId = siteIdResult?.[0]?.site_id || null;
+      this.siteId = siteIdResult?.[0]?.site_id;
+      if (!this.siteId) throw new Error("No local site_id");
+      console.log("[CRSqliteTabSync] Local site_id: ", this.siteId);
 
       // Initialize shared worker
       this.worker = await createSharedWorkerShim(

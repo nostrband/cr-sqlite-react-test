@@ -37,7 +37,7 @@ const insertTestData = async (db: DB) => {
   }
 };
 
-export const createDB = async (): Promise<DB> => {
+export const createDB = async (file: string): Promise<DB> => {
   try {
     // Initialize sqlite with wasm file loader if not already done
     if (!sqlite) {
@@ -47,7 +47,7 @@ export const createDB = async (): Promise<DB> => {
     }
 
     // Open database
-    const db = await sqlite.open("tanstack-query-test.db");
+    const db = await sqlite.open(file);
     
     // Create tables
     await createTables(db);

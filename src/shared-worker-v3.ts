@@ -1,16 +1,17 @@
 // Refactored Shared Worker using CRSqliteSharedWorker class
-import { TestDB } from './TestDB';
 import { CRSqliteSharedWorker } from './CRSqliteSharedWorker';
+import { createDB } from './databaseFactory';
+import { DB } from '@vlcn.io/crsqlite-wasm';
 
 const initializeWorker = async () => {
   try {
     console.log('[SharedWorker] Initializing...');
     
     // Create and initialize TestDB
-    const db = new TestDB("test.db");
+    let db: DB | undefined;
     
     // Create CRSqliteSharedWorker with the DB instance
-    const worker = new CRSqliteSharedWorker(() => db.db);
+    const worker = new CRSqliteSharedWorker(() => db!);
     
     // Set up connection handler immediately (no awaits above it)
     self.addEventListener('connect', (event: any) => {
@@ -18,7 +19,7 @@ const initializeWorker = async () => {
     });
 
     // Init db
-    await db.initialize();
+    db = await createDB("test.db");
 
     // Start the worker, now it will process the pending connects
     await worker.start();
