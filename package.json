@@ -1,0 +1,26 @@
+{
+  "name": "cr-sqlite-react-test",
+  "version": "1.0.0",
+  "description": "React SPA for testing cr-sqlite",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite --port 3001",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.90.3",
+    "@vlcn.io/crsqlite-wasm": "^0.16.0",
+    "broadcast-channel": "^7.1.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@vitejs/plugin-react": "^4.0.0",
+    "typescript": "^5.0.0",
+    "vite": "^4.4.0"
+  },
+  "type": "module"
+}
