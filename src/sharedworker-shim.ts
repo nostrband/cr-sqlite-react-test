@@ -1,4 +1,8 @@
-import { BroadcastChannel, createLeaderElection, LeaderElector } from 'broadcast-channel';
+import {
+  BroadcastChannel,
+  createLeaderElection,
+  LeaderElector,
+} from "broadcast-channel";
 
 export type SharedWorkerLike = {
   port: MessagePortLike;
@@ -9,24 +13,27 @@ export type MessagePortLike = {
   postMessage(data: any): void;
   start(): void;
   close(): void;
-  addEventListener(type: 'message', listener: (ev: MessageEvent) => void): void;
-  removeEventListener(type: 'message', listener: (ev: MessageEvent) => void): void;
+  addEventListener(type: "message", listener: (ev: MessageEvent) => void): void;
+  removeEventListener(
+    type: "message",
+    listener: (ev: MessageEvent) => void
+  ): void;
   onmessage: ((ev: MessageEvent) => void) | null;
 };
 
 type ShimMsg =
-  | { t: '__shim_ready' }
-  | { t: '__shim_hello'; clientId: string }
-  | { t: '__shim_toLeader'; clientId: string; payload: any }
-  | { t: '__shim_toClient'; clientId: string; payload: any }
-  | { t: '__shim_disconnect'; clientId: string };
+  | { t: "__shim_ready" }
+  | { t: "__shim_hello"; clientId: string }
+  | { t: "__shim_toLeader"; clientId: string; payload: any }
+  | { t: "__shim_toClient"; clientId: string; payload: any }
+  | { t: "__shim_disconnect"; clientId: string };
 
 function supportsNativeSharedWorkerModule(): boolean {
   try {
-    const blob = new Blob(['export {};'], { type: 'application/javascript' });
+    const blob = new Blob(["export {};"], { type: "application/javascript" });
     const url = URL.createObjectURL(blob);
     // @ts-ignore
-    const w = new SharedWorker(url, { type: 'module' });
+    const w = new SharedWorker(url, { type: "module" });
     w.port.close();
     URL.revokeObjectURL(url);
     return true;
@@ -37,13 +44,13 @@ function supportsNativeSharedWorkerModule(): boolean {
 
 export async function createSharedWorkerShim(
   workerUrl: string | URL,
-  options?: { name?: string; type?: 'classic' | 'module' }
+  options?: { name?: string; type?: "classic" | "module" }
 ): Promise<SharedWorkerLike> {
-  const type = options?.type ?? 'module';
+  const type = options?.type ?? "module";
   const name = options?.name ?? stableName(String(workerUrl));
 
   // Native fast path
-  if ('SharedWorker' in window && supportsNativeSharedWorkerModule()) {
+  if ("SharedWorker" in window && supportsNativeSharedWorkerModule()) {
     // @ts-ignore
     const sw = new SharedWorker(workerUrl as any, { name, type });
     return { port: sw.port };
@@ -63,10 +70,14 @@ export async function createSharedWorkerShim(
   });
 
   elector.onduplicate = async () => {
-    try { await elector.die(); } catch {}
+    try {
+      await elector.die();
+    } catch {}
   };
 
-  const clientId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  const clientId = `${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2)}`;
 
   // Wait for leader-ready announcement
   let leaderReady = false;
@@ -74,15 +85,15 @@ export async function createSharedWorkerShim(
   const readyP = new Promise<void>((r) => (resolveReady = r));
 
   const readyHandler = (msg: ShimMsg) => {
-    if (msg?.t === '__shim_ready' && !leaderReady) {
+    if (msg?.t === "__shim_ready" && !leaderReady) {
       leaderReady = true;
       resolveReady();
     }
   };
-  chan.addEventListener('message', readyHandler);
+  chan.addEventListener("message", readyHandler);
 
   if (!(await elector.hasLeader())) {
-    chan.postMessage({ t: '__shim_hello', clientId });
+    chan.postMessage({ t: "__shim_hello", clientId });
   }
 
   if (!leaderReady) {
@@ -99,17 +110,17 @@ export async function createSharedWorkerShim(
 
   // Create virtual port and announce presence
   const port = createVirtualPort(chan, clientId);
-  chan.postMessage({ t: '__shim_hello', clientId });
+  chan.postMessage({ t: "__shim_hello", clientId });
 
-  const unload = () => chan.postMessage({ t: '__shim_disconnect', clientId });
-  window.addEventListener('beforeunload', unload, { once: true });
+  const unload = () => chan.postMessage({ t: "__shim_disconnect", clientId });
+  window.addEventListener("beforeunload", unload, { once: true });
 
   // Cleanup helper for terminate()
   const cleanup = async () => {
     try {
-      window.removeEventListener('beforeunload', unload);
+      window.removeEventListener("beforeunload", unload);
       port.close();
-      chan.removeEventListener('message', readyHandler as any);
+      chan.removeEventListener("message", readyHandler as any);
       await elector.die().catch(() => void 0);
       await chan.close();
     } catch {}
@@ -129,35 +140,45 @@ function stableName(s: string) {
   return `sw-${h.toString(36)}`;
 }
 
-function createVirtualPort(chan: BroadcastChannel<ShimMsg>, clientId: string): MessagePortLike {
+function createVirtualPort(
+  chan: BroadcastChannel<ShimMsg>,
+  clientId: string
+): MessagePortLike {
   let onmessage: ((ev: MessageEvent) => void) | null = null;
   const listeners = new Set<(ev: MessageEvent) => void>();
   let closed = false;
 
   const toClientHandler = (msg: ShimMsg) => {
     if (closed) return;
-    if (msg && msg.t === '__shim_toClient' && msg.clientId === clientId) {
-      const ev = new MessageEvent('message', { data: msg.payload });
+    if (msg && msg.t === "__shim_toClient" && msg.clientId === clientId) {
+      const ev = new MessageEvent("message", { data: msg.payload });
       onmessage?.(ev);
       for (const fn of listeners) fn(ev);
     }
   };
-  chan.addEventListener('message', toClientHandler);
+  chan.addEventListener("message", toClientHandler);
 
   return {
     postMessage: (data: any) => {
-      if (!closed) chan.postMessage({ t: '__shim_toLeader', clientId, payload: data });
+      if (!closed)
+        chan.postMessage({ t: "__shim_toLeader", clientId, payload: data });
     },
     start: () => {},
     close: () => {
       if (closed) return;
       closed = true;
-      chan.postMessage({ t: '__shim_disconnect', clientId });
-      chan.removeEventListener('message', toClientHandler as any);
+      chan.postMessage({ t: "__shim_disconnect", clientId });
+      chan.removeEventListener("message", toClientHandler as any);
     },
-    addEventListener: (_type, fn) => { listeners.add(fn); },
-    removeEventListener: (_type, fn) => { listeners.delete(fn); },
-    get onmessage() { return onmessage; },
+    addEventListener: (_type, fn) => {
+      listeners.add(fn);
+    },
+    removeEventListener: (_type, fn) => {
+      listeners.delete(fn);
+    },
+    get onmessage() {
+      return onmessage;
+    },
     set onmessage(fn) {
       if (onmessage && listeners.has(onmessage)) listeners.delete(onmessage);
       onmessage = fn;
@@ -170,8 +191,9 @@ async function startLeaderHost(
   chan: BroadcastChannel<ShimMsg>,
   _name: string,
   workerUrl: string | URL,
-  type: 'classic' | 'module'
+  type: "classic" | "module"
 ) {
+  const absUrl = String(new URL(String(workerUrl), globalThis.location?.href));
   const bootstrap = `
     const clients = new Map(); // clientId -> VirtualPort
 
@@ -216,39 +238,67 @@ async function startLeaderHost(
       if (pend.length) { for (const id of pend) doConnect(id); pend.length = 0; }
     }
 
-    ${type === 'module'
-      ? `import(${JSON.stringify(String(workerUrl))}).then(__afterLoad);`
-      : `importScripts(${JSON.stringify(String(workerUrl))}); __afterLoad();`}
+    ${
+      type === "module"
+        ? `import(${JSON.stringify(absUrl)}).then(__afterLoad);`
+        : `importScripts(${JSON.stringify(absUrl)}); __afterLoad();`
+    }
   `;
 
-  const blob = new Blob([bootstrap], { type: 'application/javascript' });
+  const blob = new Blob([bootstrap], { type: "application/javascript" });
   const url = URL.createObjectURL(blob);
   const dedicated = new Worker(url, { type });
-  URL.revokeObjectURL(url);
+
+  // Revoke when worker starts
+  const revoke = () => {
+    try {
+      URL.revokeObjectURL(url);
+    } catch {}
+  };
+  dedicated.addEventListener("message", function onceLoaded() {
+    revoke();
+    dedicated.removeEventListener("message", onceLoaded);
+  });
+  dedicated.addEventListener("error", () => revoke());
 
   // Dedicated Worker → followers
   const fromWorker = (e: MessageEvent) => {
     const m = e.data;
     if (m && m.__toClient) {
-      chan.postMessage({ t: '__shim_toClient', clientId: m.__toClient, payload: m.payload });
+      chan.postMessage({
+        t: "__shim_toClient",
+        clientId: m.__toClient,
+        payload: m.payload,
+      });
+    } else if (m && m.__shim_error) {
+      console.error("[SW shim] worker error:", m.__shim_error);
     }
   };
   dedicated.onmessage = fromWorker;
 
+  dedicated.onerror = (ev) => {
+    console.error("[SW shim] worker onerror", ev);
+    chan.postMessage({ t: "__shim_ready" }); // still unblock clients; your code may retry
+  };
+
   // Followers → Dedicated Worker
   const toWorker = (msg: ShimMsg) => {
     if (!msg) return;
-    if (msg.t === '__shim_hello') {
-      dedicated.postMessage({ __cmd: '__connect', clientId: msg.clientId });
-      chan.postMessage({ t: '__shim_ready' });
-    } else if (msg.t === '__shim_toLeader') {
-      dedicated.postMessage({ __cmd: '__fromClient', clientId: msg.clientId, payload: msg.payload });
-    } else if (msg.t === '__shim_disconnect') {
-      dedicated.postMessage({ __cmd: '__disconnect', clientId: msg.clientId });
+    if (msg.t === "__shim_hello") {
+      dedicated.postMessage({ __cmd: "__connect", clientId: msg.clientId });
+      chan.postMessage({ t: "__shim_ready" });
+    } else if (msg.t === "__shim_toLeader") {
+      dedicated.postMessage({
+        __cmd: "__fromClient",
+        clientId: msg.clientId,
+        payload: msg.payload,
+      });
+    } else if (msg.t === "__shim_disconnect") {
+      dedicated.postMessage({ __cmd: "__disconnect", clientId: msg.clientId });
     }
   };
-  chan.addEventListener('message', toWorker);
+  chan.addEventListener("message", toWorker);
 
   // Announce readiness
-  chan.postMessage({ t: '__shim_ready' });
+  chan.postMessage({ t: "__shim_ready" });
 }
