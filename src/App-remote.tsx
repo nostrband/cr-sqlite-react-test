@@ -11,7 +11,7 @@ interface AppState {
 }
 
 function App() {
-  const { dbStatus, error, tabSync, setError, retryInitialization } = useCRSqliteQuery();
+  const { dbStatus, error, tabSync, setError, retryInitialization, getWorkerSiteId } = useCRSqliteQuery();
   
   const [appState, setAppState] = useState<AppState>({
     selectedList: '',
@@ -24,6 +24,10 @@ function App() {
   const { data: allTodos = [], isLoading: todosLoading } = useAllTodos();
   const { data: changes = [], isLoading: changesLoading } = useChanges();
   const { data: selectedTodos = [], isLoading: selectedTodosLoading } = useTodosByList(appState.selectedList);
+
+  // Get worker site ID for display
+  const workerSiteId = getWorkerSiteId();
+  const workerSiteIdHex = workerSiteId ? Array.from(workerSiteId).map(b => b.toString(16).padStart(2, '0')).join('') : 'Not available';
 
   // Mutations
   const addTodoMutation = useAddTodoRemote();
@@ -140,17 +144,18 @@ function App() {
 
   return (
     <div className="app">
-      <h1>TanStack Query + CRSqlite Test</h1>
+      <h1>TanStack Query + CRSqlite Test (Remote-First)</h1>
       
       <div className="sync-controls">
         <button className="btn btn-primary" onClick={handleManualSync}>
           Manual Sync
         </button>
         <div className="status" style={{ marginLeft: '20px' }}>
-          <strong>Tab ID:</strong> {tabSync?.getTabId() || 'N/A'} | 
-          <strong> Broadcast Version:</strong> {tabSync?.getLastBroadcastVersion() || 0} | 
-          <strong> Sync Status:</strong> {tabSync?.isRunning() ? 'Running' : 'Stopped'} | 
-          <strong> Changes:</strong> {changes.length} | 
+          <strong>Tab ID:</strong> {tabSync?.getTabId() || 'N/A'} |
+          <strong> Worker Site ID:</strong> {workerSiteIdHex} |
+          <strong> Broadcast Version:</strong> {tabSync?.getLastBroadcastVersion() || 0} |
+          <strong> Sync Status:</strong> {tabSync?.isRunning() ? 'Running' : 'Stopped'} |
+          <strong> Changes:</strong> {changes.length} |
           <strong> Todos:</strong> {allTodos.length}
         </div>
       </div>

@@ -14,6 +14,7 @@ interface CRSqliteQueryContextType {
   setError: (error: string | null) => void;
   retryInitialization: () => Promise<void>;
   dbExec: (sql: string, args?: any[]) => Promise<any>;
+  getWorkerSiteId: () => Uint8Array | null;
 }
 
 const CRSqliteQueryContext = createContext<CRSqliteQueryContextType | undefined>(undefined);
@@ -124,6 +125,10 @@ export function CRSqliteQueryProvider({
     return tabSync.dbExec(sql, args);
   };
 
+  const getWorkerSiteId = (): Uint8Array | null => {
+    return tabSync?.getWorkerSiteId() || null;
+  };
+
   const contextValue: CRSqliteQueryContextType = {
     dbStatus,
     error,
@@ -132,6 +137,7 @@ export function CRSqliteQueryProvider({
     setError,
     retryInitialization,
     dbExec,
+    getWorkerSiteId,
   };
 
   return (

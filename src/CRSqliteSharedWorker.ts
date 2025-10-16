@@ -1,7 +1,7 @@
 // Reusable CRSqlite Shared Worker class
 import { DB } from "@vlcn.io/crsqlite-wasm";
 
-interface Change {
+export interface Change {
   table: string;
   pk: Uint8Array;
   cid: string;
@@ -13,7 +13,7 @@ interface Change {
   seq: number;
 }
 
-interface WorkerMessage {
+export interface WorkerMessage {
   type: "sync" | "exec";
   data?: any;
   sql?: string;
@@ -21,16 +21,17 @@ interface WorkerMessage {
   requestId?: string;
 }
 
-interface WorkerResponse {
-  type: "sync-data" | "error" | "exec-reply";
-  data?: Change[];
+export interface WorkerResponse {
+  type: "sync-data" | "error" | "exec-reply" | "ready";
+  changes?: Change[];
   error?: string;
   result?: any;
   requestId?: string;
+  siteId?: Uint8Array;
 }
 
-interface BroadcastMessage {
-  type: "changes";
+export interface BroadcastMessage {
+  type: "changes" | "changes-applied";
   data: Change[];
   sourceTabId?: string;
 }
@@ -41,6 +42,7 @@ export class CRSqliteSharedWorker {
   private isStarted = false;
   private pendingPorts: MessagePort[] = [];
   private lastDbVersion = 0;
+  private workerSiteId: Uint8Array | null = null;
 
   constructor(db: DB | (() => DB)) {
     this._db = db;
@@ -57,7 +59,7 @@ export class CRSqliteSharedWorker {
       console.log("[CRSqliteSharedWorker] Starting...");
 
       // Initialize last db version before starting to send messages
-      await this.initializeLastDbVersion();
+      await this.initialize();
 
       // Initialize broadcast channel for tab communication
       this.broadcastChannel = new BroadcastChannel("db-sync");
@@ -132,7 +134,7 @@ export class CRSqliteSharedWorker {
 
             port.postMessage({
               type: "sync-data",
-              data: changes,
+              changes: changes,
             } as WorkerResponse);
             break;
 
@@ -190,6 +192,11 @@ export class CRSqliteSharedWorker {
     });
 
     port.start();
+
+    port.postMessage({
+          type: "ready",
+          siteId: this.workerSiteId,
+        } as WorkerResponse);
   }
 
   private async handleBroadcastMessage(event: MessageEvent): Promise<void> {
@@ -263,7 +270,7 @@ export class CRSqliteSharedWorker {
     }
   }
 
-  private async initializeLastDbVersion(): Promise<void> {
+  private async initialize(): Promise<void> {
     try {
       const result = await this.db.execO<{ db_version: number }>(
         "SELECT db_version FROM crsql_changes WHERE site_id = crsql_site_id()"
@@ -271,6 +278,13 @@ export class CRSqliteSharedWorker {
       this.lastDbVersion = result?.[0]?.db_version || 0;
       console.log(
         `[CRSqliteSharedWorker] Initialized lastDbVersion to ${this.lastDbVersion}`
+      );
+      const resultSite = await this.db.execO<{ site_id: Uint8Array }>(
+        "SELECT crsql_site_id() as site_id"
+      );
+      this.workerSiteId = resultSite[0].site_id;
+      console.log(
+        `[CRSqliteSharedWorker] Initialized workerSiteId to ${this.workerSiteId}`
       );
     } catch (error) {
       console.error(

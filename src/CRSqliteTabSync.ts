@@ -5,38 +5,12 @@ import {
   MessagePortLike,
   SharedWorkerLike,
 } from "./sharedworker-shim";
-
-interface Change {
-  table: string;
-  pk: Uint8Array;
-  cid: string;
-  val: any;
-  col_version: number;
-  db_version: number;
-  site_id: Uint8Array;
-  cl: number;
-  seq: number;
-}
-
-interface WorkerMessage {
-  type: "sync" | "exec";
-  data?: any;
-  sql?: string;
-  args?: any[];
-}
-
-interface WorkerResponse {
-  type: "sync-data" | "error" | "exec-reply";
-  data?: Change[];
-  error?: string;
-  result?: any;
-}
-
-interface BroadcastMessage {
-  type: "changes" | "changes-applied";
-  data?: Change[];
-  sourceTabId?: string;
-}
+import {
+  BroadcastMessage,
+  Change,
+  WorkerMessage,
+  WorkerResponse,
+} from "./CRSqliteSharedWorker";
 
 export class CRSqliteTabSync {
   private db: DB;
@@ -49,6 +23,7 @@ export class CRSqliteTabSync {
   private changeInterval: NodeJS.Timeout | null = null;
   private isStarted = false;
   private siteId: Uint8Array | null = null;
+  private workerSiteId: Uint8Array | null = null;
   private pendingExecRequests = new Map<
     string,
     { resolve: (result: any) => void; reject: (error: Error) => void }
@@ -147,6 +122,7 @@ export class CRSqliteTabSync {
     this.worker = null;
     this.isStarted = false;
     this.lastBroadcastVersion = 0;
+    this.workerSiteId = null;
 
     console.log("[CRSqliteTabSync] Stopped");
   }
@@ -157,13 +133,13 @@ export class CRSqliteTabSync {
 
     switch (response.type) {
       case "sync-data":
-        if (response.data && this.onSyncDataReceived) {
-          this.applyChanges(response.data)
+        if (response.changes && this.onSyncDataReceived) {
+          this.applyChanges(response.changes)
             .then(() => {
               // Update last broadcast version after applying initial sync
-              if (response.data!.length > 0) {
+              if (response.changes!.length > 0) {
                 const maxVersion = Math.max(
-                  ...response.data!.map((c: Change) => c.db_version)
+                  ...response.changes!.map((c: Change) => c.db_version)
                 );
                 this.lastBroadcastVersion = maxVersion;
                 console.log(
@@ -172,7 +148,7 @@ export class CRSqliteTabSync {
               }
 
               if (this.onSyncDataReceived) {
-                this.onSyncDataReceived(response.data!);
+                this.onSyncDataReceived(response.changes!);
               }
             })
             .catch((error) => {
@@ -189,7 +165,7 @@ export class CRSqliteTabSync {
 
       case "exec-reply":
         // Handle exec reply by resolving the corresponding promise
-        const requestId = (event.data as any).requestId;
+        const requestId = response.requestId;
         if (requestId && this.pendingExecRequests.has(requestId)) {
           const { resolve } = this.pendingExecRequests.get(requestId)!;
           this.pendingExecRequests.delete(requestId);
@@ -197,11 +173,22 @@ export class CRSqliteTabSync {
         }
         break;
 
+      case "ready":
+        // Store worker site_id when worker is ready
+        if (response.siteId) {
+          this.workerSiteId = response.siteId;
+          console.log(
+            "[CRSqliteTabSync] Received worker site_id:",
+            this.workerSiteId
+          );
+        }
+        break;
+
       case "error":
         console.error("[CRSqliteTabSync] Worker error:", response.error);
 
         // Check if this error is for a pending exec request
-        const errorRequestId = (event.data as any).requestId;
+        const errorRequestId = response.requestId;
         if (errorRequestId && this.pendingExecRequests.has(errorRequestId)) {
           const { reject } = this.pendingExecRequests.get(errorRequestId)!;
           this.pendingExecRequests.delete(errorRequestId);
@@ -365,6 +352,10 @@ export class CRSqliteTabSync {
 
   isRunning(): boolean {
     return this.isStarted;
+  }
+
+  getWorkerSiteId(): Uint8Array | null {
+    return this.workerSiteId;
   }
 
   // Method to trigger sync manually (called by local changes)
