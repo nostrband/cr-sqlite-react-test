@@ -53,8 +53,8 @@ export async function createSharedWorkerShim(
   const chan = new BroadcastChannel<ShimMsg>(`sw:${name}`);
   const elector: LeaderElector = createLeaderElection(chan);
 
-  // Start lazy election and also await leadership in background
-  void elector.applyOnce();
+  // Kick off lazy election by awaiting leadership in the background.
+  // This resolves only if THIS instance becomes leader.
   void elector.awaitLeadership().then(async () => {
     if (!leaderStarted) {
       leaderStarted = true;
