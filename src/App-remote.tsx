@@ -11,7 +11,7 @@ interface AppState {
 }
 
 function App() {
-  const { dbStatus, error, tabSync, setError, retryInitialization, getWorkerSiteId } = useCRSqliteQuery();
+  const { dbStatus, error, client: tabSync, setError, retryInitialization, getWorkerSiteId } = useCRSqliteQuery();
   
   const [appState, setAppState] = useState<AppState>({
     selectedList: '',

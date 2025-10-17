@@ -1,27 +1,18 @@
 // Reusable CRSqlite Tab Synchronization class
 import { DB } from "@vlcn.io/crsqlite-wasm";
 import {
-  createSharedWorkerShim,
-  MessagePortLike,
-  SharedWorkerLike,
-} from "./sharedworker-shim";
-import {
   BroadcastMessage,
   Change,
   WorkerMessage,
   WorkerResponse,
-} from "./CRSqliteSharedWorker";
+} from "./CRSqliteWorkerBase";
 
-export class CRSqliteTabSync {
+export class CRSqliteWorkerClientBase {
   private db: DB;
-  private sharedWorkerUrl: string;
-  private worker: SharedWorkerLike | null = null;
-  private port: MessagePortLike | null = null;
-  private broadcastChannel: BroadcastChannel | null = null;
-  private tabId: string;
+  protected tabId: string;
   private lastBroadcastVersion = 0;
   private changeInterval: NodeJS.Timeout | null = null;
-  private isStarted = false;
+  protected isStarted = false;
   private siteId: Uint8Array | null = null;
   private workerSiteId: Uint8Array | null = null;
   private pendingExecRequests = new Map<
@@ -32,16 +23,11 @@ export class CRSqliteTabSync {
 
   // Event handlers
   private onSyncDataReceived: ((data: Change[]) => void) | null = null;
-  private onError: ((error: string) => void) | null = null;
+  protected onError: ((error: string) => void) | null = null;
   private onTablesChanged: ((tables: string[]) => void) | null = null;
 
-  constructor(
-    db: DB,
-    sharedWorkerUrl: string,
-    onTablesChanged?: (tables: string[]) => void
-  ) {
+  constructor(db: DB, onTablesChanged?: (tables: string[]) => void) {
     this.db = db;
-    this.sharedWorkerUrl = sharedWorkerUrl;
     this.tabId = `tab-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     this.onTablesChanged = onTablesChanged || null;
   }
@@ -50,7 +36,7 @@ export class CRSqliteTabSync {
     if (this.isStarted) return;
 
     try {
-      console.log("[CRSqliteTabSync] Starting...");
+      console.log("[CRSqliteWorkerClientBase] Starting...");
 
       // Get our site_id for filtering
       const siteIdResult = await this.db.execO<{ site_id: Uint8Array }>(
@@ -58,40 +44,12 @@ export class CRSqliteTabSync {
       );
       this.siteId = siteIdResult?.[0]?.site_id;
       if (!this.siteId) throw new Error("No local site_id");
-      console.log("[CRSqliteTabSync] Local site_id: ", this.siteId);
-
-      // Initialize shared worker
-      this.worker = await createSharedWorkerShim(this.sharedWorkerUrl, {
-        type: "module",
-        name: "crsqlite-sync-" + this.tabId,
-      });
-
-      this.port = this.worker.port;
-
-      // Set up worker message handling
-      this.port.addEventListener(
-        "message",
-        this.handleWorkerMessage.bind(this)
-      );
-      this.port.start();
-
-      // Set up broadcast channel
-      this.broadcastChannel = new BroadcastChannel("db-sync");
-      this.broadcastChannel.addEventListener(
-        "message",
-        this.handleBroadcastMessage.bind(this)
-      );
-
-      // Request initial sync immediately
-      this.port.postMessage({ type: "sync" } as WorkerMessage);
-
-      // Start periodic change detection
-      this.startChangeDetection();
+      console.log("[CRSqliteWorkerClientBase] Local site_id: ", this.siteId);
 
       this.isStarted = true;
-      console.log("[CRSqliteTabSync] Started successfully");
+      console.log("[CRSqliteWorkerClientBase] Started successfully");
     } catch (error) {
-      console.error("[CRSqliteTabSync] Failed to start:", error);
+      console.error("[CRSqliteWorkerClientBase] Failed to start:", error);
       if (this.onError) {
         this.onError((error as Error).message);
       }
@@ -102,34 +60,30 @@ export class CRSqliteTabSync {
   stop(): void {
     if (!this.isStarted) return;
 
-    console.log("[CRSqliteTabSync] Stopping...");
+    console.log("[CRSqliteWorkerClientBase] Stopping...");
 
     if (this.changeInterval) {
       clearInterval(this.changeInterval);
       this.changeInterval = null;
     }
 
-    if (this.broadcastChannel) {
-      this.broadcastChannel.close();
-      this.broadcastChannel = null;
-    }
-
-    if (this.port) {
-      this.port.close();
-      this.port = null;
-    }
-
-    this.worker = null;
     this.isStarted = false;
     this.lastBroadcastVersion = 0;
     this.workerSiteId = null;
 
-    console.log("[CRSqliteTabSync] Stopped");
+    console.log("[CRSqliteWorkerClientBase] Stopped");
   }
 
-  private handleWorkerMessage(event: MessageEvent): void {
-    const response: WorkerResponse = event.data;
-    console.log("[CRSqliteTabSync] Received worker message:", response);
+  protected postMessage(message: WorkerMessage) {
+    throw new Error("postMessage not implemented in worker client base");
+  }
+
+  protected broadcastMessage(message: BroadcastMessage) {
+    throw new Error("broadcastMessage not implemented in worker client base");
+  }
+
+  protected handleWorkerMessage(response: WorkerResponse): void {
+    console.log("[CRSqliteWorkerClientBase] Received worker message:", response);
 
     switch (response.type) {
       case "sync-data":
@@ -143,7 +97,7 @@ export class CRSqliteTabSync {
                 );
                 this.lastBroadcastVersion = maxVersion;
                 console.log(
-                  `[CRSqliteTabSync] Updated lastBroadcastVersion to ${maxVersion} after initial sync`
+                  `[CRSqliteWorkerClientBase] Updated lastBroadcastVersion to ${maxVersion} after initial sync`
                 );
               }
 
@@ -153,7 +107,7 @@ export class CRSqliteTabSync {
             })
             .catch((error) => {
               console.error(
-                "[CRSqliteTabSync] Error applying sync data:",
+                "[CRSqliteWorkerClientBase] Error applying sync data:",
                 error
               );
               if (this.onError) {
@@ -178,14 +132,14 @@ export class CRSqliteTabSync {
         if (response.siteId) {
           this.workerSiteId = response.siteId;
           console.log(
-            "[CRSqliteTabSync] Received worker site_id:",
+            "[CRSqliteWorkerClientBase] Received worker site_id:",
             this.workerSiteId
           );
         }
         break;
 
       case "error":
-        console.error("[CRSqliteTabSync] Worker error:", response.error);
+        console.error("[CRSqliteWorkerClientBase] Worker error:", response.error);
 
         // Check if this error is for a pending exec request
         const errorRequestId = response.requestId;
@@ -200,9 +154,8 @@ export class CRSqliteTabSync {
     }
   }
 
-  private handleBroadcastMessage(event: MessageEvent): void {
-    const message: BroadcastMessage = event.data;
-    console.log("[CRSqliteTabSync] Received broadcast message:", message);
+  protected handleBroadcastMessage(message: BroadcastMessage): void {
+    console.log("[CRSqliteWorkerClientBase] Received broadcast message:", message);
 
     // Ignore messages from this tab
     if (message.sourceTabId === this.tabId) {
@@ -221,7 +174,7 @@ export class CRSqliteTabSync {
             })
             .catch((error) => {
               console.error(
-                "[CRSqliteTabSync] Error applying broadcast changes:",
+                "[CRSqliteWorkerClientBase] Error applying broadcast changes:",
                 error
               );
               if (this.onError) {
@@ -236,7 +189,7 @@ export class CRSqliteTabSync {
   private async applyChanges(changes: Change[]): Promise<void> {
     if (!changes || changes.length === 0) return;
 
-    console.log(`[CRSqliteTabSync] Applying ${changes.length} changes`);
+    console.log(`[CRSqliteWorkerClientBase] Applying ${changes.length} changes`);
 
     try {
       const touched = new Set<string>();
@@ -245,7 +198,7 @@ export class CRSqliteTabSync {
       // Filter out changes from our own site_id to avoid infinite loops
       for (const change of changes) {
         if (this.siteId && this.arraysEqual(change.site_id, this.siteId)) {
-          console.log(`[CRSqliteTabSync] Skipping change from own site_id`);
+          console.log(`[CRSqliteWorkerClientBase] Skipping change from own site_id`);
           continue;
         }
         filteredChanges.push(change);
@@ -253,7 +206,7 @@ export class CRSqliteTabSync {
       }
 
       if (filteredChanges.length === 0) {
-        console.log(`[CRSqliteTabSync] No external changes to apply`);
+        console.log(`[CRSqliteWorkerClientBase] No external changes to apply`);
         return;
       }
 
@@ -283,10 +236,10 @@ export class CRSqliteTabSync {
       }
 
       console.log(
-        `[CRSqliteTabSync] Successfully applied ${filteredChanges.length} external changes`
+        `[CRSqliteWorkerClientBase] Successfully applied ${filteredChanges.length} external changes`
       );
     } catch (error) {
-      console.error(`[CRSqliteTabSync] Error applying changes:`, error);
+      console.error(`[CRSqliteWorkerClientBase] Error applying changes:`, error);
       throw error;
     }
   }
@@ -299,12 +252,6 @@ export class CRSqliteTabSync {
     return true;
   }
 
-  private startChangeDetection(): void {
-    // We no longer need periodic change detection since local changes
-    // are now triggered explicitly via triggerSync() when mutations occur
-    console.log("[CRSqliteTabSync] Change detection now handled via callbacks");
-  }
-
   private async getChangesAfterVersion(dbVersion: number): Promise<Change[]> {
     try {
       const result = await this.db.execO<Change>(
@@ -314,7 +261,7 @@ export class CRSqliteTabSync {
       return result || [];
     } catch (error) {
       console.error(
-        "[CRSqliteTabSync] Error getting changes after version:",
+        "[CRSqliteWorkerClientBase] Error getting changes after version:",
         error
       );
       return [];
@@ -322,15 +269,13 @@ export class CRSqliteTabSync {
   }
 
   async requestSync(): Promise<void> {
-    if (!this.port || !this.isStarted) {
-      console.warn(
-        "[CRSqliteTabSync] Cannot sync - not started or port not available"
-      );
+    if (!this.isStarted) {
+      console.warn("[CRSqliteWorkerClientBase] Cannot sync - not started");
       return;
     }
 
-    console.log("[CRSqliteTabSync] Requesting manual sync");
-    this.port.postMessage({ type: "sync" } as WorkerMessage);
+    console.log("[CRSqliteWorkerClientBase] Requesting manual sync");
+    this.postMessage({ type: "sync" });
   }
 
   // Event handler setters
@@ -361,7 +306,7 @@ export class CRSqliteTabSync {
   // Method to trigger sync manually (called by local changes)
   triggerSync(): void {
     if (!this.isStarted) return;
-    console.log("[CRSqliteTabSync] Triggering sync due to local changes");
+    console.log("[CRSqliteWorkerClientBase] Triggering sync due to local changes");
     // Force immediate change detection
     this.checkForLocalChanges();
   }
@@ -375,29 +320,25 @@ export class CRSqliteTabSync {
 
       if (changes.length > 0) {
         console.log(
-          `[CRSqliteTabSync] Found ${changes.length} local changes after broadcast version ${this.lastBroadcastVersion}`
+          `[CRSqliteWorkerClientBase] Found ${changes.length} local changes after broadcast version ${this.lastBroadcastVersion}`
         );
 
-        // Check if broadcast channel is still open
-        if (this.broadcastChannel) {
-          // Broadcast all new changes
-          this.broadcastChannel.postMessage({
-            type: "changes",
-            data: changes,
-            sourceTabId: this.tabId,
-          } as BroadcastMessage);
+        this.broadcastMessage({
+          type: "changes",
+          data: changes,
+          sourceTabId: this.tabId,
+        });
 
-          // Update the last broadcast version to prevent re-broadcasting
-          const maxVersion = Math.max(...changes.map((c) => c.db_version));
-          this.lastBroadcastVersion = maxVersion;
-          console.log(
-            `[CRSqliteTabSync] Broadcasted ${changes.length} changes, updated broadcast version to ${maxVersion}`
-          );
-        }
+        // Update the last broadcast version to prevent re-broadcasting
+        const maxVersion = Math.max(...changes.map((c) => c.db_version));
+        this.lastBroadcastVersion = maxVersion;
+        console.log(
+          `[CRSqliteWorkerClientBase] Broadcasted ${changes.length} changes, updated broadcast version to ${maxVersion}`
+        );
       }
     } catch (error) {
       console.error(
-        "[CRSqliteTabSync] Error checking for local changes:",
+        "[CRSqliteWorkerClientBase] Error checking for local changes:",
         error
       );
       if (this.onError) {
@@ -408,8 +349,8 @@ export class CRSqliteTabSync {
 
   // Remote database execution method
   async dbExec(sql: string, args: any[] = []): Promise<any> {
-    if (!this.port || !this.isStarted) {
-      throw new Error("TabSync not started or port not available");
+    if (!this.isStarted) {
+      throw new Error("CRSqliteWorkerClientBase not started");
     }
 
     return new Promise((resolve, reject) => {
@@ -427,12 +368,12 @@ export class CRSqliteTabSync {
       });
 
       // Send exec message to worker with request ID
-      this.port!.postMessage({
+      this.postMessage({
         type: "exec",
         sql,
         args,
         requestId,
-      } as WorkerMessage & { requestId: string });
+      });
 
       // Set a timeout to avoid hanging forever
       timeout = setTimeout(() => {

@@ -36,13 +36,16 @@ export interface BroadcastMessage {
   sourceTabId?: string;
 }
 
-export class CRSqliteSharedWorker {
+export interface WorkerResponsePort {
+  postMessage: (response: WorkerResponse) => void;
+}
+
+export class CRSqliteWorkerBase {
   private _db: DB | (() => DB);
   private broadcastChannel: BroadcastChannel | null = null;
-  private isStarted = false;
-  private pendingPorts: MessagePort[] = [];
+  protected isStarted = false;
   private lastDbVersion = 0;
-  private workerSiteId: Uint8Array | null = null;
+  protected workerSiteId: Uint8Array | null = null;
 
   constructor(db: DB | (() => DB)) {
     this._db = db;
@@ -56,7 +59,7 @@ export class CRSqliteSharedWorker {
     if (this.isStarted) return;
 
     try {
-      console.log("[CRSqliteSharedWorker] Starting...");
+      console.log("[CRSqliteWorkerBase] Starting...");
 
       // Initialize last db version before starting to send messages
       await this.initialize();
@@ -69,139 +72,90 @@ export class CRSqliteSharedWorker {
       );
 
       this.isStarted = true;
-      console.log("[CRSqliteSharedWorker] Started successfully");
-
-      // Process any pending port connections
-      this.processPendingPorts();
+      console.log("[CRSqliteWorkerBase] Started successfully");
     } catch (error) {
-      console.error("[CRSqliteSharedWorker] Failed to start:", error);
+      console.error("[CRSqliteWorkerBase] Failed to start:", error);
       this.isStarted = false;
       throw error;
     }
   }
 
-  onConnect(port: MessagePort): void {
-    console.log(
-      "[CRSqliteSharedWorker] New tab connected, isStarted:",
-      this.isStarted
-    );
+  protected async handleClientMessage(message: WorkerMessage, port: WorkerResponsePort) {
+    console.log("[CRSqliteWorkerBase] Received message from tab:", message);
 
-    if (this.isStarted) {
-      // Worker is ready, set up handlers immediately
-      this.setupPortHandlers(port);
-    } else {
-      // Worker not ready yet, queue the connection
-      console.log(
-        "[CRSqliteSharedWorker] Worker not started, queueing connection"
-      );
-      this.pendingPorts.push(port);
-    }
-  }
-
-  private processPendingPorts(): void {
-    console.log(
-      `[CRSqliteSharedWorker] Processing ${this.pendingPorts.length} pending connections`
-    );
-
-    while (this.pendingPorts.length > 0) {
-      const port = this.pendingPorts.shift()!;
-      this.setupPortHandlers(port);
-    }
-  }
-
-  private setupPortHandlers(port: MessagePort): void {
-    console.log(
-      "[CRSqliteSharedWorker] Setting up port handlers for connected tab"
-    );
-
-    port.addEventListener("message", async (messageEvent: MessageEvent) => {
-      const message: WorkerMessage = messageEvent.data;
-      console.log("[CRSqliteSharedWorker] Received message from tab:", message);
-
-      try {
-        switch (message.type) {
-          case "sync":
-            if (!this.isStarted) {
-              port.postMessage({
-                type: "error",
-                error: "Worker not started",
-              } as WorkerResponse);
-              return;
-            }
-
-            // Send all current changes to the requesting tab
-            const changes = await this.getAllChanges();
-
+    try {
+      switch (message.type) {
+        case "sync":
+          if (!this.isStarted) {
             port.postMessage({
-              type: "sync-data",
-              changes: changes,
-            } as WorkerResponse);
-            break;
+              type: "error",
+              error: "Worker not started",
+            });
+            return;
+          }
 
-          case "exec":
-            if (!this.isStarted) {
-              port.postMessage({
-                type: "error",
-                error: "Worker not started",
-              } as WorkerResponse);
-              return;
-            }
+          // Send all current changes to the requesting tab
+          const changes = await this.getAllChanges();
 
-            try {
-              // Execute the SQL query on the worker's database
-              const result = await this.db.exec(
-                message.sql!,
-                message.args || []
-              );
+          port.postMessage({
+            type: "sync-data",
+            changes: changes,
+          });
+          break;
 
-              // Broadcast changes first
-              await this.broadcastChangesSinceLastVersion();
+        case "exec":
+          if (!this.isStarted) {
+            port.postMessage({
+              type: "error",
+              error: "Worker not started",
+            });
+            return;
+          }
 
-              // Send reply with result, hopefully the changes have already been delivered
-              port.postMessage({
-                type: "exec-reply",
-                result: result,
-                requestId: message.requestId,
-              } as WorkerResponse);
-            } catch (execError) {
-              console.error(
-                "[CRSqliteSharedWorker] Error executing SQL:",
-                execError
-              );
-              port.postMessage({
-                type: "error",
-                error: (execError as Error).message,
-                requestId: message.requestId,
-              } as WorkerResponse);
-            }
-            break;
+          try {
+            // Execute the SQL query on the worker's database
+            const result = await this.db.exec(message.sql!, message.args || []);
 
-          default:
-            console.warn(
-              "[CRSqliteSharedWorker] Unknown message type:",
-              message.type
+            // Broadcast changes first
+            await this.broadcastChangesSinceLastVersion();
+
+            // Send reply with result, hopefully the changes have already been delivered
+            port.postMessage({
+              type: "exec-reply",
+              result: result,
+              requestId: message.requestId,
+            });
+          } catch (execError) {
+            console.error(
+              "[CRSqliteWorkerBase] Error executing SQL:",
+              execError
             );
-        }
-      } catch (error) {
-        console.error("[CRSqliteSharedWorker] Error handling message:", error);
-        port.postMessage({
-          type: "error",
-          error: (error as Error).message,
-        } as WorkerResponse);
+            port.postMessage({
+              type: "error",
+              error: (execError as Error).message,
+              requestId: message.requestId,
+            });
+          }
+          break;
+
+        default:
+          console.warn(
+            "[CRSqliteWorkerBase] Unknown message type:",
+            message.type
+          );
       }
-    });
-
-    port.start();
-
-    port.postMessage({
-          type: "ready",
-          siteId: this.workerSiteId,
-        } as WorkerResponse);
+    } catch (error) {
+      console.error("[CRSqliteWorkerBase] Error handling message:", error);
+      port.postMessage({
+        type: "error",
+        error: (error as Error).message,
+      });
+    }
   }
 
   private async handleBroadcastMessage(event: MessageEvent): Promise<void> {
     const message: BroadcastMessage = event.data;
-    console.log("[CRSqliteSharedWorker] Received broadcast message:", message);
+    console.log("[CRSqliteWorkerBase] Received broadcast message:", message);
 
     if (message.type === "changes" && message.data) {
       try {
@@ -217,7 +171,7 @@ export class CRSqliteSharedWorker {
           });
         }
       } catch (error) {
-        console.error("[CRSqliteSharedWorker] Error applying changes:", error);
+        console.error("[CRSqliteWorkerBase] Error applying changes:", error);
       }
     }
   }
@@ -227,7 +181,7 @@ export class CRSqliteSharedWorker {
       const result = await this.db.execO<Change>("SELECT * FROM crsql_changes");
       return result || [];
     } catch (error) {
-      console.error("[CRSqliteSharedWorker] Error getting changes:", error);
+      console.error("[CRSqliteWorkerBase] Error getting changes:", error);
       return [];
     }
   }
@@ -236,7 +190,7 @@ export class CRSqliteSharedWorker {
     if (!changes || changes.length === 0) return;
 
     console.log(
-      `[CRSqliteSharedWorker] Applying ${changes.length} changes to persistent database`
+      `[CRSqliteWorkerBase] Applying ${changes.length} changes to persistent database`
     );
 
     try {
@@ -259,11 +213,11 @@ export class CRSqliteSharedWorker {
         }
       });
       console.log(
-        "[CRSqliteSharedWorker] Successfully applied changes to persistent database"
+        "[CRSqliteWorkerBase] Successfully applied changes to persistent database"
       );
     } catch (error) {
       console.error(
-        "[CRSqliteSharedWorker] Error applying changes to database:",
+        "[CRSqliteWorkerBase] Error applying changes to database:",
         error
       );
       throw error;
@@ -277,18 +231,18 @@ export class CRSqliteSharedWorker {
       );
       this.lastDbVersion = result?.[0]?.db_version || 0;
       console.log(
-        `[CRSqliteSharedWorker] Initialized lastDbVersion to ${this.lastDbVersion}`
+        `[CRSqliteWorkerBase] Initialized lastDbVersion to ${this.lastDbVersion}`
       );
       const resultSite = await this.db.execO<{ site_id: Uint8Array }>(
         "SELECT crsql_site_id() as site_id"
       );
       this.workerSiteId = resultSite[0].site_id;
       console.log(
-        `[CRSqliteSharedWorker] Initialized workerSiteId to ${this.workerSiteId}`
+        `[CRSqliteWorkerBase] Initialized workerSiteId to ${this.workerSiteId}`
       );
     } catch (error) {
       console.error(
-        "[CRSqliteSharedWorker] Error initializing last db version:",
+        "[CRSqliteWorkerBase] Error initializing last db version:",
         error
       );
       this.lastDbVersion = 0;
@@ -305,7 +259,7 @@ export class CRSqliteSharedWorker {
 
       if (changes && changes.length > 0) {
         console.log(
-          `[CRSqliteSharedWorker] Broadcasting ${changes.length} changes since version ${this.lastDbVersion}`
+          `[CRSqliteWorkerBase] Broadcasting ${changes.length} changes since version ${this.lastDbVersion}`
         );
 
         // Update last db version
@@ -322,7 +276,7 @@ export class CRSqliteSharedWorker {
       }
     } catch (error) {
       console.error(
-        "[CRSqliteSharedWorker] Error broadcasting changes:",
+        "[CRSqliteWorkerBase] Error broadcasting changes:",
         error
       );
     }
@@ -334,7 +288,6 @@ export class CRSqliteSharedWorker {
       this.broadcastChannel = null;
     }
     this.isStarted = false;
-    this.pendingPorts.length = 0;
     this.lastDbVersion = 0;
   }
 }

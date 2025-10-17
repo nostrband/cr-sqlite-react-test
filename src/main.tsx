@@ -6,12 +6,19 @@ import { createDB, closeDB } from "./databaseFactory";
 import "./index.css";
 // @ts-ignore
 import sharedWorkerUrl from "./shared-worker-v3.ts?sharedworker&url";
-import { notifyTablesChanged, queryClient, setOnLocalChanges } from "./queryClient";
+// @ts-ignore
+import dedicatedWorkerUrl from "./worker.ts?worker&url";
+import {
+  notifyTablesChanged,
+  queryClient,
+  setOnLocalChanges,
+} from "./queryClient";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <CRSqliteQueryProvider
       sharedWorkerUrl={sharedWorkerUrl}
+      dedicatedWorkerUrl={dedicatedWorkerUrl}
       createDB={() => createDB(":memory:")}
       closeDB={closeDB}
       queryClient={queryClient}

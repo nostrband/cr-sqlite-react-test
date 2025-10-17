@@ -2,7 +2,8 @@
  * SharedWorker shim for Android and others:
  * - one tab is elected as leader using broadcast-channel package
  * - leader tab creates a Worker and talks to it using it's postMessage interface
- * - shim returns SharedWorkerLike and MessagePortLike
+ * - Worker receives a bootstrap script that imitates SharedWorker as self and then imports target shared worker code
+ * - shim returns SharedWorkerLike with MessagePortLike
  * - MessagePortLike is virtual port that uses broadcast channels so all tabs could talk to leader
  * - since leader can't receive on it's own broadcast channel, we use two: chanTxClient and chanRxClient
  */

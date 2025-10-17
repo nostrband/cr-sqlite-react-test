@@ -1,20 +1,28 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { TestDB } from './TestDB';
-import { CRSqliteTabSync } from './CRSqliteTabSync';
+import {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  ReactNode,
+} from "react";
+import { TestDB } from "./TestDB";
+import { CRSqliteWorkerClientBrowser } from "./worker/CRSqliteWorkerClientBrowser";
 
-type DbStatus = 'initializing' | 'ready' | 'error';
+type DbStatus = "initializing" | "ready" | "error";
 
 interface CRSqliteContextType {
   dbStatus: DbStatus;
   error: string | null;
   testDB: TestDB | null;
-  tabSync: CRSqliteTabSync | null;
+  client: CRSqliteWorkerClientBrowser | null;
   setError: (error: string | null) => void;
   retryInitialization: () => Promise<void>;
   onDataChanged: () => void;
 }
 
-const CRSqliteContext = createContext<CRSqliteContextType | undefined>(undefined);
+const CRSqliteContext = createContext<CRSqliteContextType | undefined>(
+  undefined
+);
 
 interface CRSqliteProviderProps {
   children: ReactNode;
@@ -22,24 +30,28 @@ interface CRSqliteProviderProps {
   db: TestDB;
 }
 
-export function CRSqliteProvider({ 
-  children, 
+export function CRSqliteProvider({
+  children,
   db,
-  sharedWorkerUrl 
+  sharedWorkerUrl,
 }: CRSqliteProviderProps) {
-  const [dbStatus, setDbStatus] = useState<DbStatus>('initializing');
+  const [dbStatus, setDbStatus] = useState<DbStatus>("initializing");
   const [error, setError] = useState<string | null>(null);
   const [testDB] = useState(db);
-  const [tabSync, setTabSync] = useState<CRSqliteTabSync | null>(null);
-  const [dataChangeListeners, setDataChangeListeners] = useState<(() => void)[]>([]);
+  const [client, setClient] = useState<CRSqliteWorkerClientBrowser | null>(
+    null
+  );
+  const [dataChangeListeners, setDataChangeListeners] = useState<
+    (() => void)[]
+  >([]);
 
   useEffect(() => {
     initializeDatabase();
-    
+
     // Cleanup on unmount
     return () => {
-      if (tabSync) {
-        tabSync.stop();
+      if (client) {
+        client.stop();
       }
       testDB.close();
     };
@@ -47,69 +59,74 @@ export function CRSqliteProvider({
 
   const initializeDatabase = async () => {
     try {
-      setDbStatus('initializing');
+      setDbStatus("initializing");
       setError(null);
-      
+
       // Initialize local TestDB
       await testDB.initialize();
-      
+
       // Create and configure tab sync
       console.log("sharedWorkerUrl", sharedWorkerUrl);
-      const sync = new CRSqliteTabSync(testDB.db, sharedWorkerUrl);
-      
+      const sync = new CRSqliteWorkerClientBrowser({
+        db: testDB.db,
+        sharedWorkerUrl,
+      });
+
       // Set up event handlers
       sync.onSyncData(() => {
         notifyDataChanged();
       });
-      
+
       sync.onErrorOccurred((errorMsg) => {
         setError(errorMsg);
       });
-      
+
       // Start synchronization
       await sync.start();
-      
-      setTabSync(sync);
-      setDbStatus('ready');
-      
+
+      setClient(sync);
+      setDbStatus("ready");
+
       // Notify initial data load
       notifyDataChanged();
-      
-      console.log('[CRSqliteProvider] Initialized successfully');
-      
+
+      console.log("[CRSqliteProvider] Initialized successfully");
     } catch (err) {
-      setDbStatus('error');
+      setDbStatus("error");
       setError((err as Error).message);
-      console.error('[CRSqliteProvider] Initialization failed:', err);
+      console.error("[CRSqliteProvider] Initialization failed:", err);
     }
   };
 
   const retryInitialization = async () => {
     // Stop existing sync if any
-    if (tabSync) {
-      tabSync.stop();
-      setTabSync(null);
+    if (client) {
+      client.stop();
+      setClient(null);
     }
-    
+
     await initializeDatabase();
   };
 
   const notifyDataChanged = () => {
-    dataChangeListeners.forEach(listener => {
+    dataChangeListeners.forEach((listener) => {
       try {
         listener();
       } catch (error) {
-        console.error('[CRSqliteProvider] Error in data change listener:', error);
+        console.error(
+          "[CRSqliteProvider] Error in data change listener:",
+          error
+        );
       }
     });
   };
 
   const onDataChanged = (listener: () => void) => {
-    setDataChangeListeners(prev => [...prev, listener]);
-    
+    setDataChangeListeners((prev) => [...prev, listener]);
+
     // Return cleanup function
     return () => {
-      setDataChangeListeners(prev => prev.filter(l => l !== listener));
+      setDataChangeListeners((prev) => prev.filter((l) => l !== listener));
     };
   };
 
@@ -117,14 +134,14 @@ export function CRSqliteProvider({
     dbStatus,
     error,
     testDB,
-    tabSync,
+    client: client,
     setError,
     retryInitialization,
     onDataChanged: () => {
       // This is a bit of a hack - we return a function that can be used to register listeners
       // In practice, components should use the hook pattern
       notifyDataChanged();
-    }
+    },
   };
 
   return (
@@ -137,26 +154,29 @@ export function CRSqliteProvider({
 export function useCRSqlite() {
   const context = useContext(CRSqliteContext);
   if (context === undefined) {
-    throw new Error('useCRSqlite must be used within a CRSqliteProvider');
+    throw new Error("useCRSqlite must be used within a CRSqliteProvider");
   }
   return context;
 }
 
 // Custom hook for data changes
-export function useCRSqliteData<T>(dataLoader: () => Promise<T>, deps: any[] = []) {
+export function useCRSqliteData<T>(
+  dataLoader: () => Promise<T>,
+  deps: any[] = []
+) {
   const { testDB, dbStatus } = useCRSqlite();
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
 
   const loadData = async () => {
-    if (!testDB || dbStatus !== 'ready') return;
-    
+    if (!testDB || dbStatus !== "ready") return;
+
     try {
       setLoading(true);
       const result = await dataLoader();
       setData(result);
     } catch (error) {
-      console.error('[useCRSqliteData] Error loading data:', error);
+      console.error("[useCRSqliteData] Error loading data:", error);
     } finally {
       setLoading(false);
     }
@@ -168,17 +188,17 @@ export function useCRSqliteData<T>(dataLoader: () => Promise<T>, deps: any[] = [
 
   // Set up data change listener
   useEffect(() => {
-    if (dbStatus !== 'ready') return;
-    
+    if (dbStatus !== "ready") return;
+
     const cleanup = () => {
       loadData();
     };
-    
+
     // Listen for data changes
     const interval = setInterval(() => {
       loadData();
     }, 100); // Check for changes every 100ms
-    
+
     return () => {
       clearInterval(interval);
     };

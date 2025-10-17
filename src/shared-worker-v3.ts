@@ -1,5 +1,5 @@
 // Refactored Shared Worker using CRSqliteSharedWorker class
-import { CRSqliteSharedWorker } from './CRSqliteSharedWorker';
+import { CRSqliteSharedWorker } from './worker/CRSqliteSharedWorker';
 import { createDB } from './databaseFactory';
 import { DB } from '@vlcn.io/crsqlite-wasm';
 
